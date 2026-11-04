@@ -11,6 +11,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.db.session import create_engine, create_session_factory
+from app.storage import LocalStorage
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -35,6 +36,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None,
     )
     app.state.settings = settings
+    app.state.storage = LocalStorage(settings.storage_dir)
 
     app.add_middleware(RequestContextMiddleware)
     if settings.cors_origins:
