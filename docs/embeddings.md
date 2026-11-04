@@ -35,6 +35,15 @@ These models are trained so the first numbers carry the most information, which 
 
 It is a constant in code (`EMBEDDING_DIMENSIONS`), not a setting, on purpose: changing it means changing the database column and re-embedding every chunk, so it should be a deliberate decision backed by evaluation results.
 
+## Why these index settings
+
+The HNSW index is built with `m = 16` and `ef_construction = 64`, which are pgvector's defaults.
+
+- **`m`** is how many links each vector keeps to its neighbours. More links find neighbours more reliably but make the index larger and slower to build.
+- **`ef_construction`** is how hard the builder looks for good links when adding a vector. Higher gives a better index but slows down every insert, which here means slower document processing.
+
+The defaults give high recall for collections up to millions of vectors, and search quality is tuned at query time instead, with `ef_search` (see [Retrieval](retrieval.md)), which needs no rebuild. The index settings would only be revisited if the evaluation suite showed relevant chunks being missed even with a high `ef_search`.
+
 ## Running without an API key
 
 `EMBEDDING_PROVIDER=hashing` builds vectors from the words themselves. Tests and offline development use it. It does not understand meaning ("car" and "automobile" look unrelated), so it is never used to judge quality.

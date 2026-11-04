@@ -31,6 +31,19 @@ The API and workers scale separately: more users need more API instances, a back
 - **Safe to repeat.** Processing again replaces the document's chunks instead of adding to them, so retries never create duplicates.
 - **Event loop stays free.** CPU-heavy parsing runs in a thread.
 
+## Why these numbers
+
+### 30-minute lease (`INGESTION_LEASE_SECONDS`)
+
+If a worker dies mid-document, the document stays `processing` until the lease runs out. The lease has to be:
+
+- **longer than the slowest real document takes**, or a second worker would start on a document that is still being processed (harmless, since processing is safe to repeat, but wasted work). A 1,000-page PDF takes a few minutes, so 30 minutes leaves a wide margin.
+- **shorter than the queue's one-hour redelivery timeout**, so when the queue hands a lost task to another worker, the lease has already expired and the new worker can claim the document. Settings reject a lease of an hour or more for this reason.
+
+### Retries at 30 s, 1 min, 2 min, 4 min (`INGESTION_MAX_RETRIES`)
+
+Each wait doubles (exponential backoff), capped at 15 minutes. Short outages and rate limits clear within the first retry or two; longer outages get more breathing room instead of being hammered. Four retries cover roughly 7.5 minutes of outage before the document is marked `failed`, after which it can be queued again by hand.
+
 ## Settings
 
 | Variable | Default | Meaning |

@@ -14,6 +14,7 @@ A document question-answering service: users upload their own documents and ask 
 | Database | PostgreSQL 16 + pgvector |
 | ORM and migrations | SQLAlchemy 2 (async), Alembic |
 | Embeddings | OpenAI `text-embedding-3-small` (1536 dimensions) |
+| Answers | OpenAI `gpt-6-luna` with structured output and citations |
 | Vector search | pgvector with an HNSW index (cosine distance) |
 | Background jobs | Celery + Redis |
 | Packaging and runtime | Docker, Docker Compose |
@@ -68,6 +69,7 @@ All endpoints except the health checks require a bearer token.
 | `GET` | `/api/v1/documents/{id}/events` | Live processing status as server-sent events |
 | `POST` | `/api/v1/documents/{id}/process` | Queue a document for processing again, for example after a failure |
 | `DELETE` | `/api/v1/documents/{id}` | Delete a document and its file |
+| `POST` | `/api/v1/questions` | Ask a question; get an answer citing file and page |
 | `GET` | `/health/live`, `/health/ready` | Liveness and readiness probes |
 
 ```bash
@@ -80,6 +82,11 @@ TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/token \
 
 curl -X POST localhost:8000/api/v1/documents \
   -H "Authorization: Bearer $TOKEN" -F file=@report.pdf
+
+# once the document is ready:
+curl -X POST localhost:8000/api/v1/questions \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"question": "How did revenue change this year?"}'
 ```
 
 ## Documentation
@@ -91,6 +98,7 @@ One guide per module, in [docs/](docs/):
 | [Ingestion](docs/ingestion.md) | Reading PDF, Word and text files, splitting them into chunks, and how the chunk size is chosen |
 | [Embeddings](docs/embeddings.md) | Turning chunks into vectors so search works by meaning, stored and indexed in pgvector |
 | [Worker](docs/worker.md) | Background processing: the queue, retries, and what happens when something fails |
+| [Retrieval](docs/retrieval.md) | Finding the right chunks for a question and writing an answer that cites them |
 | [Events](docs/events.md) | Following a document's progress live over server-sent events |
 
 ## Project layout
@@ -105,6 +113,7 @@ app/
   schemas/      request and response models
   events/       live status updates (Redis pub/sub, server-sent events)
   embeddings/   embedding providers behind one interface (OpenAI, offline hashing)
+  llm/          chat models behind one interface, and the answer prompt
   ingestion/    text extraction and chunking (pure functions, no I/O)
   services/     business rules (auth, uploads, ingestion)
   worker/       Celery app, background tasks and the queue the API sends to
@@ -137,7 +146,7 @@ tests/          pytest suite
 - [x] Authentication and document upload
 - [x] Text extraction and chunking
 - [x] Embeddings, pgvector storage and background ingestion
-- [ ] Retrieval and answers with citations
+- [x] Retrieval and answers with citations
 - [ ] Evaluation suite and published results
 - [ ] Model selection write-up backed by evaluation runs
 - [ ] Web UI and public demo

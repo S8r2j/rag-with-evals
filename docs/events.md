@@ -45,6 +45,20 @@ data: {"status": "ready", "chunks_total": 83, ...}
 - **Updates never break processing.** If Redis is unreachable, the worker logs it and carries on.
 - **No proxy buffering** (`X-Accel-Buffering: no`), so events arrive as they happen.
 
+## Why these numbers
+
+### Heartbeat every 15 seconds (`SSE_HEARTBEAT_SECONDS`)
+
+Proxies and load balancers close connections that stay silent too long, commonly after 30 to 60 seconds (nginx's default is 60). A heartbeat every 15 seconds stays well inside the strictest of these, while costing only a few bytes per connection.
+
+### Streams last at most 30 minutes (`SSE_MAX_STREAM_SECONDS`)
+
+Even very large documents finish well within 30 minutes, so normal streams end on their own when the document is done. The cap only matters for abandoned connections (a closed laptop, a lost network), which would otherwise hold a server connection and a Redis subscription forever. A client still watching simply reconnects.
+
+### Reconnect after 3 seconds (`retry: 3000`)
+
+Quick enough that a user does not notice a dropped connection, slow enough that many clients reconnecting at once after a server restart do not overwhelm it.
+
 ## Calling it from a browser
 
 The endpoint needs the `Authorization` header, like the rest of the API. The browser's built-in `EventSource` cannot send headers, so the web client reads the stream with `fetch`:
