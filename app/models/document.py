@@ -48,5 +48,8 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     error_message: Mapped[str | None] = mapped_column(Text)
     page_count: Mapped[int | None] = mapped_column(Integer)
+    # Vectors from different models are not comparable, so record which model
+    # produced this document's chunks; a model change means re-embedding.
+    embedding_model: Mapped[str | None] = mapped_column(String(100))
 
     owner: Mapped["User"] = relationship(back_populates="documents")
