@@ -65,6 +65,7 @@ All endpoints except the health checks require a bearer token.
 | `GET` | `/api/v1/documents?limit=&offset=` | List your documents, newest first |
 | `GET` | `/api/v1/documents/{id}` | One document and its processing status |
 | `GET` | `/api/v1/documents/{id}/chunks?limit=&offset=` | The chunks a processed document was split into |
+| `GET` | `/api/v1/documents/{id}/events` | Live processing status as server-sent events |
 | `POST` | `/api/v1/documents/{id}/process` | Queue a document for processing again, for example after a failure |
 | `DELETE` | `/api/v1/documents/{id}` | Delete a document and its file |
 | `GET` | `/health/live`, `/health/ready` | Liveness and readiness probes |
@@ -83,7 +84,14 @@ curl -X POST localhost:8000/api/v1/documents \
 
 ## Documentation
 
-- [How documents are ingested](docs/ingestion.md): extraction, cleaning, chunking, embedding and background processing, with a worked example, how the chunk size is chosen, and how short and long documents are handled.
+Short guides, one topic each, in [docs/](docs/README.md):
+
+- [Extraction](docs/extraction.md): reading PDF, Word and text files
+- [Chunking](docs/chunking.md): splitting text, with a worked example
+- [Choosing the chunk size](docs/chunk-size.md): why 400 tokens, and how evaluation decides
+- [Embeddings](docs/embeddings.md): search by meaning with pgvector
+- [Background processing](docs/background-processing.md): queue, worker, retries and failures
+- [Live status updates](docs/live-status.md): progress over server-sent events
 
 ## Project layout
 
@@ -95,6 +103,7 @@ app/
   models/       SQLAlchemy models
   repositories/ database access, always scoped to the owning user
   schemas/      request and response models
+  events/       live status updates (Redis pub/sub, server-sent events)
   embeddings/   embedding providers behind one interface (OpenAI, offline hashing)
   ingestion/    text extraction and chunking (pure functions, no I/O)
   services/     business rules (auth, uploads, ingestion)
@@ -117,15 +126,9 @@ tests/          pytest suite
 - **Tenant isolation lives in the data layer.** Every document query filters by owner, and another user's document returns `404` rather than `403`, so its existence is not revealed.
 - **File and database stay consistent.** The file is written atomically (temp file, then rename) and the database row is committed only after the file is stored; if the commit fails, the file is removed.
 - **Passwords use Argon2id.** Logins for unknown emails still run a hash check, so response time does not reveal which emails have accounts.
-- **Text extraction keeps page numbers.** PDFs are read page by page so every chunk knows the pages it came from, which is what answer citations point to. Word tables are kept as `cell | cell` rows rather than dropped. Text is normalised (hyphenated line breaks rejoined, whitespace collapsed) before chunking.
-- **Clear failures instead of empty documents.** Password-protected, damaged, over-long and image-only PDFs are marked `failed` with a reason the user can act on (an image-only PDF needs OCR), rather than silently producing no chunks.
-- **Chunks are sized in tokens, not characters.** Chunking uses the same tokenizer family as the models, so a chunk's size in a prompt is known exactly. Text is split at the most natural boundary that fits (paragraph, then sentence, then a token window as a last resort), and neighbouring chunks share a few sentences so a fact on a boundary is still found.
-- **Ingestion is idempotent and safe to run concurrently.** A worker claims a document with `SELECT ... FOR UPDATE SKIP LOCKED`, and reprocessing replaces the document's chunks instead of appending, so retries never create duplicates. CPU-bound parsing runs in a worker thread so it never blocks the event loop.
-- **Uploads return immediately.** The API stores the file, queues it, and responds with status `pending`; a Celery worker extracts, chunks and embeds it. A slow 500-page PDF never ties up a web request, and API and workers scale independently.
-- **Tasks are not lost.** Tasks are acknowledged only after they finish, so if a worker dies mid-document the task returns to the queue. This is safe because processing is idempotent. A queue outage during upload does not fail the upload; the document stays `pending` and can be queued again.
-- **Retries only where they can help.** A broken file fails at once with a reason. An embedding-service outage or rate limit sends the document back to `pending` and retries with exponential backoff (30 s, 1 min, 2 min, ...), marking it `failed` only after the last attempt.
-- **Vectors know their model.** Each document records the embedding model that produced its vectors, because vectors from different models cannot be compared. Switching models means re-embedding, which the process endpoint supports.
-- **HNSW index for search.** Nearest-neighbour queries use pgvector's HNSW index with cosine distance, so search stays fast as chunks grow into the hundreds of thousands, without the training step IVFFlat needs.
+- **Processing happens in the background.** Uploads return at once; a worker extracts, chunks and embeds the file, and clients follow progress live over server-sent events. See [docs/](docs/README.md).
+- **Failures are explicit.** Unusable files fail with a reason the user can act on; embedding-service outages are retried with backoff before giving up.
+- **Safe to retry.** Only one worker can claim a document, a dead worker's claim expires, and reprocessing replaces chunks, so retries never duplicate work.
 - **Stateless API.** No in-process state is shared between requests, so the API can be scaled horizontally behind a load balancer.
 
 ## Roadmap
