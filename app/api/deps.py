@@ -6,10 +6,12 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.errors import UnauthorizedError
+from app.core.errors import ServiceUnavailableError, UnauthorizedError
 from app.core.security import decode_access_token
 from app.db.session import session_scope
+from app.embeddings import Embedder, build_embedder
 from app.events import DocumentEvents
+from app.llm import ChatModel, build_chat_model
 from app.models import User
 from app.repositories.users import UserRepository
 from app.storage.base import Storage
@@ -39,11 +41,35 @@ def get_document_events(request: Request) -> DocumentEvents:
     return request.app.state.document_events
 
 
+def get_embedder(request: Request) -> Embedder:
+    # Built on first use rather than at startup, so the rest of the API works
+    # (and reports a clear error here) when no API key is configured.
+    state = request.app.state
+    if getattr(state, "embedder", None) is None:
+        try:
+            state.embedder = build_embedder(state.settings)
+        except RuntimeError as exc:
+            raise ServiceUnavailableError("Search is not configured on this server") from exc
+    return state.embedder
+
+
+def get_chat_model(request: Request) -> ChatModel:
+    state = request.app.state
+    if getattr(state, "chat_model", None) is None:
+        try:
+            state.chat_model = build_chat_model(state.settings)
+        except RuntimeError as exc:
+            raise ServiceUnavailableError("Answering is not configured on this server") from exc
+    return state.chat_model
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 StorageDep = Annotated[Storage, Depends(get_storage)]
 QueueDep = Annotated[IngestionQueue, Depends(get_ingestion_queue)]
 EventsDep = Annotated[DocumentEvents, Depends(get_document_events)]
+EmbedderDep = Annotated[Embedder, Depends(get_embedder)]
+ChatModelDep = Annotated[ChatModel, Depends(get_chat_model)]
 
 
 async def get_current_user(
