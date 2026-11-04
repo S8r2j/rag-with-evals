@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from redis.asyncio import Redis
 
 from app.api.router import api_router
 from app.api.routes import health
@@ -11,6 +12,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.db.session import create_engine, create_session_factory
+from app.events import RedisDocumentEvents
 from app.storage import LocalStorage
 from app.worker.queue import CeleryIngestionQueue
 
@@ -27,6 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            await redis.aclose()
             await engine.dispose()
 
     app = FastAPI(
@@ -39,6 +42,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.storage = LocalStorage(settings.storage_dir)
     app.state.ingestion_queue = CeleryIngestionQueue(settings)
+    # The client connects lazily, on first use.
+    redis = Redis.from_url(str(settings.redis_url))
+    app.state.document_events = RedisDocumentEvents(redis)
 
     app.add_middleware(RequestContextMiddleware)
     if settings.cors_origins:

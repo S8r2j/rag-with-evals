@@ -10,6 +10,7 @@ import uuid
 
 import structlog
 from celery import Celery, Task, signals
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -17,6 +18,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.db.session import create_session_factory
 from app.embeddings import TransientEmbeddingError, build_embedder
+from app.events import RedisDocumentEvents
 from app.services.ingestion import IngestionService
 from app.storage import LocalStorage
 from app.worker.celery_app import INGEST_DOCUMENT_TASK, celery_config
@@ -40,17 +42,23 @@ def retry_delay(attempt: int) -> int:
 
 
 async def ingest(document_id: uuid.UUID, settings: Settings, *, final_attempt: bool) -> None:
-    # Each task runs in a fresh event loop (asyncio.run), and an engine's
-    # connections belong to the loop that opened them, so the engine is made
-    # and disposed per task. NullPool keeps that cheap.
+    # Each task runs in a fresh event loop (asyncio.run), and connections
+    # belong to the loop that opened them, so the database engine and Redis
+    # client are made and closed per task. NullPool keeps that cheap.
     engine = create_async_engine(str(settings.database_url), poolclass=NullPool)
+    redis = Redis.from_url(str(settings.redis_url))
     try:
         async with create_session_factory(engine)() as session:
             service = IngestionService(
-                session, LocalStorage(settings.storage_dir), settings, build_embedder(settings)
+                session,
+                LocalStorage(settings.storage_dir),
+                settings,
+                build_embedder(settings),
+                RedisDocumentEvents(redis),
             )
             await service.process(document_id, final_attempt=final_attempt)
     finally:
+        await redis.aclose()
         await engine.dispose()
 
 

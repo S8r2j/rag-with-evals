@@ -1,5 +1,6 @@
 import io
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.embeddings import EMBEDDING_DIMENSIONS, HashingEmbedder, TransientEmbeddingError
+from app.events import InMemoryDocumentEvents
 from app.models import Chunk, Document, DocumentStatus
 from app.services.ingestion import IngestionService
 from app.storage import LocalStorage
@@ -32,9 +34,12 @@ async def upload(client: AsyncClient, headers: dict, data: bytes, name: str) -> 
 
 @pytest.fixture
 def ingestion(
-    db_session: AsyncSession, storage: LocalStorage, settings: Settings
+    db_session: AsyncSession,
+    storage: LocalStorage,
+    settings: Settings,
+    events: InMemoryDocumentEvents,
 ) -> IngestionService:
-    return IngestionService(db_session, storage, settings, HashingEmbedder())
+    return IngestionService(db_session, storage, settings, HashingEmbedder(), events)
 
 
 async def test_processing_a_pdf_stores_its_chunks(
@@ -123,13 +128,14 @@ async def test_embedding_outages_are_retried_before_failing(
     db_session: AsyncSession,
     storage: LocalStorage,
     settings: Settings,
+    events: InMemoryDocumentEvents,
     final_attempt: bool,
     expected_status: DocumentStatus,
 ) -> None:
     document_id = uuid.UUID(
         await upload(client, auth_headers, make_pdf(FACT_PAGES), "observatory.pdf")
     )
-    service = IngestionService(db_session, storage, settings, FlakyEmbedder())
+    service = IngestionService(db_session, storage, settings, FlakyEmbedder(), events)
 
     with pytest.raises(TransientEmbeddingError):
         await service.process(document_id, final_attempt=final_attempt)
@@ -195,9 +201,7 @@ async def test_a_document_being_processed_cannot_be_queued_again(
     db_session: AsyncSession,
 ) -> None:
     document_id = await upload(client, auth_headers, make_pdf(FACT_PAGES), "observatory.pdf")
-    document = await db_session.get(Document, uuid.UUID(document_id))
-    document.status = DocumentStatus.PROCESSING
-    await db_session.flush()
+    await mark_processing(db_session, uuid.UUID(document_id), minutes_ago=1)
 
     response = await client.post(f"/api/v1/documents/{document_id}/process", headers=auth_headers)
     assert response.status_code == 409
@@ -299,3 +303,111 @@ async def test_deleting_a_document_removes_its_chunks(
         select(func.count()).select_from(Chunk).where(Chunk.document_id == uuid.UUID(document_id))
     )
     assert remaining == 0
+
+
+async def test_progress_is_published_step_by_step(
+    client: AsyncClient,
+    auth_headers: dict,
+    db_session: AsyncSession,
+    storage: LocalStorage,
+    settings: Settings,
+    events: InMemoryDocumentEvents,
+) -> None:
+    pages = ["\n\n".join(f"Paragraph {i} is about topic {i}." for i in range(30))]
+    document_id = uuid.UUID(await upload(client, auth_headers, make_pdf(pages), "many.pdf"))
+    small = settings.model_copy(
+        update={"chunk_max_tokens": 50, "chunk_overlap_tokens": 0, "embedding_batch_size": 2}
+    )
+    await IngestionService(db_session, storage, small, HashingEmbedder(), events).process(
+        document_id
+    )
+
+    steps = [(e.status, e.stage, e.chunks_done) for e in events.published]
+    total = events.published[-1].chunks_total
+    assert total and total > 2
+    assert steps[0] == (DocumentStatus.PROCESSING, "extracting", None)
+    assert steps[1] == (DocumentStatus.PROCESSING, "embedding", 0)
+    embedded = [done for status, stage, done in steps if stage == "embedding"]
+    assert embedded == sorted(embedded) and embedded[-1] == total
+    assert steps[-1] == (DocumentStatus.READY, None, None)
+
+
+async def test_failures_are_published_with_their_reason(
+    client: AsyncClient,
+    auth_headers: dict,
+    ingestion: IngestionService,
+    events: InMemoryDocumentEvents,
+) -> None:
+    document_id = await upload(client, auth_headers, make_blank_pdf(), "scan.pdf")
+    await ingestion.process(uuid.UUID(document_id))
+    last = events.published[-1]
+    assert last.status == DocumentStatus.FAILED
+    assert "OCR" in last.error_message
+
+
+async def test_a_broken_event_channel_does_not_stop_processing(
+    client: AsyncClient,
+    auth_headers: dict,
+    db_session: AsyncSession,
+    storage: LocalStorage,
+    settings: Settings,
+) -> None:
+    class BrokenEvents(InMemoryDocumentEvents):
+        async def publish(self, event):  # type: ignore[override]
+            raise ConnectionError("redis down")
+
+    document_id = uuid.UUID(
+        await upload(client, auth_headers, make_pdf(FACT_PAGES), "observatory.pdf")
+    )
+    service = IngestionService(db_session, storage, settings, HashingEmbedder(), BrokenEvents())
+    document = await service.process(document_id)
+    assert document.status == DocumentStatus.READY
+
+
+async def mark_processing(db_session: AsyncSession, document_id: uuid.UUID, minutes_ago: int):
+    document = await db_session.get(Document, document_id)
+    document.status = DocumentStatus.PROCESSING
+    document.processing_started_at = datetime.now(UTC) - timedelta(minutes=minutes_ago)
+    await db_session.flush()
+
+
+async def test_a_document_already_being_processed_is_skipped(
+    client: AsyncClient,
+    auth_headers: dict,
+    ingestion: IngestionService,
+    db_session: AsyncSession,
+) -> None:
+    document_id = uuid.UUID(
+        await upload(client, auth_headers, make_pdf(FACT_PAGES), "observatory.pdf")
+    )
+    await mark_processing(db_session, document_id, minutes_ago=1)
+
+    assert await ingestion.process(document_id) is None
+
+
+async def test_a_document_abandoned_by_a_dead_worker_is_reclaimed(
+    client: AsyncClient,
+    auth_headers: dict,
+    ingestion: IngestionService,
+    db_session: AsyncSession,
+) -> None:
+    document_id = uuid.UUID(
+        await upload(client, auth_headers, make_pdf(FACT_PAGES), "observatory.pdf")
+    )
+    await mark_processing(db_session, document_id, minutes_ago=120)
+
+    document = await ingestion.process(document_id)
+    assert document is not None and document.status == DocumentStatus.READY
+    assert document.processing_started_at is None
+
+
+async def test_an_abandoned_document_can_be_queued_again(
+    client: AsyncClient,
+    auth_headers: dict,
+    db_session: AsyncSession,
+) -> None:
+    document_id = await upload(client, auth_headers, make_pdf(FACT_PAGES), "observatory.pdf")
+    await mark_processing(db_session, uuid.UUID(document_id), minutes_ago=120)
+
+    response = await client.post(f"/api/v1/documents/{document_id}/process", headers=auth_headers)
+    assert response.status_code == 202

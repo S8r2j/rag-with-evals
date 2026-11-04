@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 
 from app.api.deps import get_db
 from app.core.config import Settings
+from app.events import InMemoryDocumentEvents
 from app.main import create_app
 from app.storage import LocalStorage
 
@@ -104,12 +105,22 @@ def queue() -> RecordingQueue:
 
 
 @pytest.fixture
+def events() -> InMemoryDocumentEvents:
+    return InMemoryDocumentEvents()
+
+
+@pytest.fixture
 def app(
-    settings: Settings, db_session: AsyncSession, storage: LocalStorage, queue: RecordingQueue
+    settings: Settings,
+    db_session: AsyncSession,
+    storage: LocalStorage,
+    queue: RecordingQueue,
+    events: InMemoryDocumentEvents,
 ) -> FastAPI:
     application = create_app(settings)
     application.state.storage = storage
     application.state.ingestion_queue = queue
+    application.state.document_events = events
 
     async def override_get_db() -> AsyncIterator[AsyncSession]:
         yield db_session

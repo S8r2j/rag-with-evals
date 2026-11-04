@@ -23,6 +23,7 @@ dependencies = [
     "pgvector>=0.3.6",
     "openai>=1.60",
     "celery[redis]>=5.4",
+    "redis>=5.0.1",
 ]
 
 [project.optional-dependencies]

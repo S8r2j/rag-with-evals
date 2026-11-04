@@ -39,6 +39,14 @@ class Settings(BaseSettings):
 
     redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")
     ingestion_max_retries: int = Field(default=4, ge=0)
+    # A document stuck in "processing" this long is assumed abandoned (its
+    # worker died) and may be claimed again. Kept below the queue's one-hour
+    # redelivery timeout so a redelivered task can always reclaim it.
+    ingestion_lease_seconds: int = Field(default=30 * 60, ge=60, lt=60 * 60)
+
+    # Live status stream (server-sent events).
+    sse_heartbeat_seconds: float = Field(default=15.0, gt=0)
+    sse_max_stream_seconds: float = Field(default=30 * 60, gt=0)
 
     cors_origins: list[str] = []
 

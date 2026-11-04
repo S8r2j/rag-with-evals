@@ -22,6 +22,7 @@ from app.core.errors import (
 from app.models import Chunk, Document, DocumentStatus
 from app.repositories.chunks import ChunkRepository
 from app.repositories.documents import DocumentRepository
+from app.services.ingestion import processing_is_stale
 from app.storage.base import Storage
 from app.worker.queue import IngestionQueue
 
@@ -148,7 +149,9 @@ class DocumentService:
         self, owner_id: uuid.UUID, document_id: uuid.UUID, queue: IngestionQueue
     ) -> Document:
         document = await self.get(owner_id, document_id)
-        if document.status == DocumentStatus.PROCESSING:
+        if document.status == DocumentStatus.PROCESSING and not processing_is_stale(
+            document, self.settings.ingestion_lease_seconds
+        ):
             raise ConflictError("The document is already being processed")
         document.status = DocumentStatus.PENDING
         document.error_message = None
