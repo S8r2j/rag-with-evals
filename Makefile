@@ -1,4 +1,4 @@
-.PHONY: install lint format test up down migrate
+.PHONY: install lint format test up down migrate worker
 
 install:
 	pip install -e ".[dev]"
@@ -22,3 +22,6 @@ down:
 
 migrate:
 	alembic upgrade head
+
+worker:
+	celery -A app.worker.tasks worker --loglevel=INFO --concurrency=2

@@ -9,9 +9,11 @@ from app.core.config import Settings
 from app.core.errors import UnauthorizedError
 from app.core.security import decode_access_token
 from app.db.session import session_scope
+from app.events import DocumentEvents
 from app.models import User
 from app.repositories.users import UserRepository
 from app.storage.base import Storage
+from app.worker.queue import IngestionQueue
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 
@@ -29,9 +31,19 @@ def get_storage(request: Request) -> Storage:
     return request.app.state.storage
 
 
+def get_ingestion_queue(request: Request) -> IngestionQueue:
+    return request.app.state.ingestion_queue
+
+
+def get_document_events(request: Request) -> DocumentEvents:
+    return request.app.state.document_events
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 StorageDep = Annotated[Storage, Depends(get_storage)]
+QueueDep = Annotated[IngestionQueue, Depends(get_ingestion_queue)]
+EventsDep = Annotated[DocumentEvents, Depends(get_document_events)]
 
 
 async def get_current_user(

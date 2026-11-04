@@ -16,12 +16,15 @@ from app.core.errors import (
     ConflictError,
     NotFoundError,
     PayloadTooLargeError,
+    ServiceUnavailableError,
     UnsupportedMediaTypeError,
 )
 from app.models import Chunk, Document, DocumentStatus
 from app.repositories.chunks import ChunkRepository
 from app.repositories.documents import DocumentRepository
+from app.services.ingestion import processing_is_stale
 from app.storage.base import Storage
+from app.worker.queue import IngestionQueue
 
 logger = structlog.get_logger(__name__)
 
@@ -128,6 +131,38 @@ class DocumentService:
             size_bytes=document.size_bytes,
             content_type=document.content_type,
         )
+        return document
+
+    async def schedule_processing(self, document: Document, queue: IngestionQueue) -> None:
+        """Queue a freshly uploaded document for processing.
+
+        The upload itself has already succeeded, so a queue outage is logged
+        rather than failing the request; the document stays pending and can
+        be queued again with the process endpoint.
+        """
+        try:
+            await queue.enqueue(document.id)
+        except Exception:
+            logger.exception("document_enqueue_failed", document_id=str(document.id))
+
+    async def reprocess(
+        self, owner_id: uuid.UUID, document_id: uuid.UUID, queue: IngestionQueue
+    ) -> Document:
+        document = await self.get(owner_id, document_id)
+        if document.status == DocumentStatus.PROCESSING and not processing_is_stale(
+            document, self.settings.ingestion_lease_seconds
+        ):
+            raise ConflictError("The document is already being processed")
+        document.status = DocumentStatus.PENDING
+        document.error_message = None
+        await self.session.commit()
+        try:
+            await queue.enqueue(document.id)
+        except Exception as exc:
+            logger.exception("document_enqueue_failed", document_id=str(document.id))
+            raise ServiceUnavailableError(
+                "Processing could not be scheduled. Try again shortly."
+            ) from exc
         return document
 
     async def _receive(self, upload: UploadFile, file_type: FileType) -> _ReceivedFile:

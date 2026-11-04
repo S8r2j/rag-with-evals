@@ -43,6 +43,11 @@ class PayloadTooLargeError(AppError):
     code = "payload_too_large"
 
 
+class ServiceUnavailableError(AppError):
+    status_code = HTTPStatus.SERVICE_UNAVAILABLE
+    code = "service_unavailable"
+
+
 class UnsupportedMediaTypeError(AppError):
     status_code = HTTPStatus.UNSUPPORTED_MEDIA_TYPE
     code = "unsupported_media_type"

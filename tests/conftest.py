@@ -12,6 +12,7 @@ every run.
 
 import asyncio
 import os
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 
 from app.api.deps import get_db
 from app.core.config import Settings
+from app.events import InMemoryDocumentEvents
 from app.main import create_app
 from app.storage import LocalStorage
 
@@ -43,6 +45,7 @@ def settings(tmp_path_factory: pytest.TempPathFactory) -> Settings:
         storage_dir=tmp_path_factory.mktemp("uploads"),
         max_upload_mb=1,
         log_level="WARNING",
+        embedding_provider="hashing",
     )
 
 
@@ -83,10 +86,41 @@ def storage(tmp_path: Path) -> LocalStorage:
     return LocalStorage(tmp_path / "uploads")
 
 
+class RecordingQueue:
+    """Stands in for Celery: records what was queued instead of sending it."""
+
+    def __init__(self) -> None:
+        self.enqueued: list[uuid.UUID] = []
+        self.fail = False
+
+    async def enqueue(self, document_id: uuid.UUID) -> None:
+        if self.fail:
+            raise ConnectionError("broker unavailable")
+        self.enqueued.append(document_id)
+
+
 @pytest.fixture
-def app(settings: Settings, db_session: AsyncSession, storage: LocalStorage) -> FastAPI:
+def queue() -> RecordingQueue:
+    return RecordingQueue()
+
+
+@pytest.fixture
+def events() -> InMemoryDocumentEvents:
+    return InMemoryDocumentEvents()
+
+
+@pytest.fixture
+def app(
+    settings: Settings,
+    db_session: AsyncSession,
+    storage: LocalStorage,
+    queue: RecordingQueue,
+    events: InMemoryDocumentEvents,
+) -> FastAPI:
     application = create_app(settings)
     application.state.storage = storage
+    application.state.ingestion_queue = queue
+    application.state.document_events = events
 
     async def override_get_db() -> AsyncIterator[AsyncSession]:
         yield db_session

@@ -1,8 +1,19 @@
 import enum
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -48,5 +59,11 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     error_message: Mapped[str | None] = mapped_column(Text)
     page_count: Mapped[int | None] = mapped_column(Integer)
+    # Vectors from different models are not comparable, so record which model
+    # produced this document's chunks; a model change means re-embedding.
+    embedding_model: Mapped[str | None] = mapped_column(String(100))
+    # When the current processing attempt started; lets a document whose
+    # worker died be reclaimed instead of staying "processing" forever.
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     owner: Mapped["User"] = relationship(back_populates="documents")

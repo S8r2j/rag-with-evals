@@ -16,6 +16,7 @@ class DocumentRead(BaseModel):
     status: DocumentStatus
     error_message: str | None
     page_count: int | None
+    embedding_model: str | None
     created_at: datetime
     updated_at: datetime
 
