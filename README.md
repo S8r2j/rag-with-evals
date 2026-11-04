@@ -47,6 +47,33 @@ make test
 make lint
 ```
 
+## API
+
+All endpoints except the health checks require a bearer token.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/auth/register` | Create an account |
+| `POST` | `/api/v1/auth/token` | Log in (OAuth2 password flow) and get an access token |
+| `GET` | `/api/v1/auth/me` | The current user |
+| `POST` | `/api/v1/documents` | Upload a PDF, DOCX, TXT or Markdown file |
+| `GET` | `/api/v1/documents?limit=&offset=` | List your documents, newest first |
+| `GET` | `/api/v1/documents/{id}` | One document and its processing status |
+| `DELETE` | `/api/v1/documents/{id}` | Delete a document and its file |
+| `GET` | `/health/live`, `/health/ready` | Liveness and readiness probes |
+
+```bash
+curl -X POST localhost:8000/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email": "you@example.com", "password": "a-long-password"}'
+
+TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/token \
+  -d 'username=you@example.com&password=a-long-password' | jq -r .access_token)
+
+curl -X POST localhost:8000/api/v1/documents \
+  -H "Authorization: Bearer $TOKEN" -F file=@report.pdf
+```
+
 ## Project layout
 
 ```
@@ -55,6 +82,10 @@ app/
   core/         settings, logging, error handling, middleware
   db/           engine, sessions, declarative base
   models/       SQLAlchemy models
+  repositories/ database access, always scoped to the owning user
+  schemas/      request and response models
+  services/     business rules (auth, uploads)
+  storage/      file storage behind an interface (local disk now, S3-compatible later)
 migrations/     Alembic migrations
 tests/          pytest suite
 ```
@@ -66,12 +97,17 @@ tests/          pytest suite
 - **One error format.** Every error, including validation errors and unexpected exceptions, returns `{"error": {"code", "message", "request_id"}}`.
 - **Request IDs.** Each request gets an ID (or reuses a valid incoming `X-Request-ID`), which is returned in the response header and attached to every log line, so one request can be traced across logs.
 - **Separate liveness and readiness probes.** `/health/live` never touches dependencies; `/health/ready` checks the database. A slow database therefore marks an instance as not ready without causing restarts.
+- **Uploads are validated by content, not by the client's word.** The file type comes from the extension and is confirmed against the file's leading bytes, so a renamed executable is rejected. Files are streamed in chunks with the size limit enforced as they arrive, rather than read fully into memory first.
+- **Duplicate uploads are detected by SHA-256**, enforced by a unique constraint on `(owner_id, sha256)`.
+- **Tenant isolation lives in the data layer.** Every document query filters by owner, and another user's document returns `404` rather than `403`, so its existence is not revealed.
+- **File and database stay consistent.** The file is written atomically (temp file, then rename) and the database row is committed only after the file is stored; if the commit fails, the file is removed.
+- **Passwords use Argon2id.** Logins for unknown emails still run a hash check, so response time does not reveal which emails have accounts.
 - **Stateless API.** No in-process state is shared between requests, so the API can be scaled horizontally behind a load balancer.
 
 ## Roadmap
 
 - [x] Project foundation: configuration, logging, error handling, health checks, CI
-- [ ] Authentication and document upload
+- [x] Authentication and document upload
 - [ ] Text extraction and chunking
 - [ ] Embeddings, pgvector storage and background ingestion
 - [ ] Retrieval and answers with citations

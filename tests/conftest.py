@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from app.api.deps import get_db
 from app.core.config import Settings
 from app.main import create_app
+from app.storage import LocalStorage
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/rag_test"
@@ -78,8 +79,14 @@ async def db_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture
-def app(settings: Settings, db_session: AsyncSession) -> FastAPI:
+def storage(tmp_path: Path) -> LocalStorage:
+    return LocalStorage(tmp_path / "uploads")
+
+
+@pytest.fixture
+def app(settings: Settings, db_session: AsyncSession, storage: LocalStorage) -> FastAPI:
     application = create_app(settings)
+    application.state.storage = storage
 
     async def override_get_db() -> AsyncIterator[AsyncSession]:
         yield db_session
@@ -92,3 +99,22 @@ def app(settings: Settings, db_session: AsyncSession) -> FastAPI:
 async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
+
+
+async def register_and_login(
+    client: AsyncClient, email: str, password: str = "s3cret-pass"
+) -> dict:
+    response = await client.post(
+        "/api/v1/auth/register", json={"email": email, "password": password}
+    )
+    assert response.status_code == 201, response.text
+    response = await client.post(
+        "/api/v1/auth/token", data={"username": email, "password": password}
+    )
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+@pytest.fixture
+async def auth_headers(client: AsyncClient) -> dict:
+    return await register_and_login(client, "alice@example.com")
