@@ -1,0 +1,94 @@
+"""Test fixtures.
+
+Tests run against a real PostgreSQL database (with pgvector) so they exercise
+the same SQL as production. The schema is built once per session by running
+the Alembic migrations, which also tests the migrations themselves. Each test
+then runs inside a transaction that is rolled back, so tests are isolated and
+leave nothing behind.
+
+Point TEST_DATABASE_URL at a disposable database; it is wiped at the start of
+every run.
+"""
+
+import asyncio
+import os
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+
+from app.api.deps import get_db
+from app.core.config import Settings
+from app.main import create_app
+
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/rag_test"
+)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(scope="session")
+def settings(tmp_path_factory: pytest.TempPathFactory) -> Settings:
+    return Settings(
+        environment="test",
+        database_url=TEST_DATABASE_URL,
+        jwt_secret="test-secret-that-is-at-least-32-characters-long",
+        storage_dir=tmp_path_factory.mktemp("uploads"),
+        max_upload_mb=1,
+        log_level="WARNING",
+    )
+
+
+def _run_migrations(database_url: str) -> None:
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.attributes["database_url"] = database_url
+    command.upgrade(config, "head")
+
+
+@pytest.fixture(scope="session")
+async def engine(settings: Settings) -> AsyncIterator[AsyncEngine]:
+    engine = create_async_engine(str(settings.database_url))
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP SCHEMA public CASCADE"))
+        await conn.execute(text("CREATE SCHEMA public"))
+    # Alembic's env.py starts its own event loop, so run it off this one.
+    await asyncio.to_thread(_run_migrations, str(settings.database_url))
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
+    async with engine.connect() as conn:
+        transaction = await conn.begin()
+        session = AsyncSession(
+            bind=conn, expire_on_commit=False, join_transaction_mode="create_savepoint"
+        )
+        try:
+            yield session
+        finally:
+            await session.close()
+            await transaction.rollback()
+
+
+@pytest.fixture
+def app(settings: Settings, db_session: AsyncSession) -> FastAPI:
+    application = create_app(settings)
+
+    async def override_get_db() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    application.dependency_overrides[get_db] = override_get_db
+    return application
+
+
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
