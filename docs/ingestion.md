@@ -1,13 +1,16 @@
 # How documents are ingested
 
-This page explains what happens to a file after it is uploaded, and why each step works the way it does. The code lives in `app/ingestion/` (pure text processing) and `app/services/ingestion.py` (orchestration and storage).
+This page explains what happens to a file after it is uploaded, and why each step works the way it does. The code lives in `app/ingestion/` (pure text processing), `app/embeddings/` (turning text into vectors), `app/services/ingestion.py` (orchestration and storage) and `app/worker/` (background processing).
 
 ```mermaid
 flowchart LR
-    A[Uploaded file<br/>PDF, DOCX, TXT, MD] --> B[Extract<br/>text per page]
+    U[Upload<br/>returns pending] --> Q[(Queue<br/>Redis)]
+    Q --> A[Worker picks<br/>up the file]
+    A --> B[Extract<br/>text per page]
     B --> C[Normalize<br/>clean the text]
     C --> D[Chunk<br/>token-sized pieces]
-    D --> E[Save<br/>chunks table]
+    D --> V[Embed<br/>one vector per chunk]
+    V --> E[Save<br/>status: ready]
     B -. encrypted, damaged,<br/>scanned, too long .-> F[Status: failed<br/>with a reason]
 ```
 
@@ -79,6 +82,37 @@ Sentence 4 would have taken chunk 0 to 40 words, so chunk 0 was closed. Bold sen
 
 Sentence 4 says "That mirror was made in Germany". On its own, "that mirror" could refer to anything. For the question *"Where was the telescope mirror made?"*, chunk 1 still contains *"Its main telescope has a 2-metre mirror. That mirror was made in Germany"*, so the answer and its context are found together. Overlap stops an idea that spans two sentences from being cut in half.
 
+## 4. Embed
+
+Search must match a question to chunks by **meaning**, not by exact words: "When was it built?" should find "The observatory was founded in 1998" even though they share no important word. An embedding model turns each chunk into a list of 1,536 numbers (a vector) so that texts with similar meaning get similar vectors. At question time the question is embedded the same way, and the closest chunk vectors are the most relevant chunks.
+
+- **Model.** OpenAI `text-embedding-3-small` by default. Why this model, and when another would be better, will be documented in a model selection write-up backed by evaluation runs.
+- **Batching.** Chunks are sent in batches (`EMBEDDING_BATCH_SIZE`, default 128) rather than one request each, which is far faster. The settings refuse a batch size that could exceed the provider's per-request token cap.
+- **Stored with the chunk.** Each vector is saved in the chunk row (`vector(1536)` column via pgvector), next to its text and page numbers, so one query returns everything a citation needs.
+- **Vectors know their model.** The document records which model produced its vectors. Vectors from different models are not comparable, so a model change means processing documents again.
+- **Fast search.** An HNSW index on the vectors finds the closest chunks without comparing the question against every chunk, so search stays fast with hundreds of thousands of chunks. Cosine distance is used, which compares direction (meaning) rather than length.
+- **Offline mode.** `EMBEDDING_PROVIDER=hashing` produces vectors from the words themselves, with no API key. It is used by the test suite and for development without network access. It does not understand meaning ("car" and "automobile" are unrelated to it), so it is never used to judge quality.
+
+## Background processing
+
+Processing a large PDF can take a while, and calling the embedding service adds network time. Doing that inside the upload request would leave the user waiting, tie up a web server, and fail the whole upload on any hiccup. So the work is split:
+
+1. The upload endpoint stores the file, records the document as `pending`, puts its ID on a queue (Redis), and responds immediately.
+2. A separate worker process (Celery) takes the ID from the queue and runs the steps above.
+3. The client polls `GET /documents/{id}` until the status is `ready` or `failed`.
+
+The API and workers scale independently: more uploads need more API instances, a backlog of documents needs more workers.
+
+| What goes wrong | What happens |
+|---|---|
+| The file is unusable (scanned, password, damaged) | Marked `failed` at once with a reason; retrying would not help |
+| The embedding service times out, rate-limits or is down | Back to `pending`, retried after 30 s, 1 min, 2 min, ... up to `INGESTION_MAX_RETRIES`; marked `failed` only after the last attempt |
+| The embedding service rejects the request (bad key) | Marked `failed`; this needs a configuration fix, not a retry |
+| A worker crashes mid-document | The task was not acknowledged, so the queue hands it to another worker. Safe because processing is idempotent |
+| The queue is down during an upload | The upload still succeeds and the document stays `pending` |
+
+Any document can be queued again with `POST /documents/{id}/process`, for example after a failure or after changing the embedding model.
+
 ## Choosing the chunk size
 
 The defaults are 400 tokens per chunk with 60 tokens of overlap (`CHUNK_MAX_TOKENS`, `CHUNK_OVERLAP_TOKENS`).
@@ -112,10 +146,10 @@ The chunk size does not depend on document length. It is sized to hold one idea,
 
 Long documents raise other concerns, each handled separately:
 
-- **Search speed.** With many documents there can be tens of thousands of chunks. An approximate nearest-neighbour index (HNSW in pgvector) finds the closest chunks without scanning all of them. *(Planned, with embeddings.)*
-- **Processing time.** Large files take time to extract and embed, so processing runs in a background worker: the upload returns immediately with status `pending` and the document becomes `ready` when done. *(Planned.)*
+- **Search speed.** With many documents there can be tens of thousands of chunks. An approximate nearest-neighbour index (HNSW in pgvector) finds the closest chunks without scanning all of them.
+- **Processing time.** Large files take time to extract and embed, so processing runs in a background worker: the upload returns immediately with status `pending` and the document becomes `ready` when done.
 - **Limits.** `MAX_PAGES` and `MAX_UPLOAD_MB` stop a single file from overloading the system.
-- **Cost.** Each chunk is embedded once, so embedding cost grows linearly with document length. The evaluation reports will record actual cost per document.
+- **Cost.** Each chunk is embedded once, so embedding cost grows linearly with document length. Overlap adds a little on top, since overlapping text is embedded twice. The evaluation reports will record actual cost per document.
 
 The *type* of document often matters more than its length: short, independent FAQ entries may suit smaller chunks, while contracts with long, cross-referencing clauses may suit larger ones. If users mainly upload one kind of document, the evaluation set should reflect it.
 
@@ -137,3 +171,9 @@ More advanced strategies exist for very long documents, such as storing section 
 | `TOKENIZER_ENCODING` | `o200k_base` | `tiktoken` encoding used to count tokens |
 | `MAX_PAGES` | 1000 | Largest PDF accepted, in pages |
 | `MAX_UPLOAD_MB` | 20 | Largest upload, in megabytes |
+| `EMBEDDING_PROVIDER` | `openai` | `openai`, or `hashing` for offline development and tests |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
+| `EMBEDDING_BATCH_SIZE` | 128 | Chunks per embedding request |
+| `OPENAI_API_KEY` | none | Required when the provider is `openai` |
+| `REDIS_URL` | `redis://localhost:6379/0` | Queue used to hand documents to workers |
+| `INGESTION_MAX_RETRIES` | 4 | Retries after an embedding-service outage before giving up |

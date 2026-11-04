@@ -15,6 +15,17 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   migrate:
     build: .
     command: alembic upgrade head
@@ -31,7 +42,18 @@ services:
     volumes:
       - uploads:/app/data/uploads
     depends_on:
-      migrate:
+      redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
@@ -39,6 +61,20 @@ services:
       timeout: 3s
       retries: 3
 
+  worker:
+    build: .
+    command: celery -A app.worker.tasks worker --loglevel=INFO --concurrency=2
+    env_file: .env
+    volumes:
+      # Shares the API's upload volume; with object storage this goes away.
+      - uploads:/app/data/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
 volumes:
   pgdata:
   uploads:
+  redisdata:

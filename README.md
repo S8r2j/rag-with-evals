@@ -13,15 +13,17 @@ A document question-answering service: users upload their own documents and ask 
 | API | FastAPI (async), Pydantic v2 |
 | Database | PostgreSQL 16 + pgvector |
 | ORM and migrations | SQLAlchemy 2 (async), Alembic |
-| Background jobs | Celery + Redis *(planned)* |
+| Embeddings | OpenAI `text-embedding-3-small` (1536 dimensions) |
+| Vector search | pgvector with an HNSW index (cosine distance) |
+| Background jobs | Celery + Redis |
 | Packaging and runtime | Docker, Docker Compose |
 | Quality | pytest against a real PostgreSQL, ruff, GitHub Actions |
 
 ## Quick start
 
 ```bash
-cp .env.example .env          # then set JWT_SECRET
-docker compose up --build -d  # starts Postgres, runs migrations, starts the API
+cp .env.example .env          # then set JWT_SECRET and OPENAI_API_KEY
+docker compose up --build -d  # Postgres, Redis, migrations, the API and a worker
 curl localhost:8000/health/ready
 ```
 
@@ -35,7 +37,10 @@ make install
 # point DATABASE_URL in .env at a Postgres with pgvector, then:
 make migrate
 uvicorn app.asgi:app --reload
+make worker                   # in a second terminal; needs Redis
 ```
+
+Set `EMBEDDING_PROVIDER=hashing` to try the pipeline without an OpenAI key. Its vectors only reflect shared words, so use it for development, not for judging answer quality.
 
 ### Tests
 
@@ -56,10 +61,11 @@ All endpoints except the health checks require a bearer token.
 | `POST` | `/api/v1/auth/register` | Create an account |
 | `POST` | `/api/v1/auth/token` | Log in (OAuth2 password flow) and get an access token |
 | `GET` | `/api/v1/auth/me` | The current user |
-| `POST` | `/api/v1/documents` | Upload a PDF, DOCX, TXT or Markdown file |
+| `POST` | `/api/v1/documents` | Upload a PDF, DOCX, TXT or Markdown file; it is processed in the background |
 | `GET` | `/api/v1/documents?limit=&offset=` | List your documents, newest first |
 | `GET` | `/api/v1/documents/{id}` | One document and its processing status |
 | `GET` | `/api/v1/documents/{id}/chunks?limit=&offset=` | The chunks a processed document was split into |
+| `POST` | `/api/v1/documents/{id}/process` | Queue a document for processing again, for example after a failure |
 | `DELETE` | `/api/v1/documents/{id}` | Delete a document and its file |
 | `GET` | `/health/live`, `/health/ready` | Liveness and readiness probes |
 
@@ -77,7 +83,7 @@ curl -X POST localhost:8000/api/v1/documents \
 
 ## Documentation
 
-- [How documents are ingested](docs/ingestion.md): extraction, cleaning and chunking explained with a worked example, how the chunk size is chosen, and how short and long documents are handled.
+- [How documents are ingested](docs/ingestion.md): extraction, cleaning, chunking, embedding and background processing, with a worked example, how the chunk size is chosen, and how short and long documents are handled.
 
 ## Project layout
 
@@ -89,8 +95,10 @@ app/
   models/       SQLAlchemy models
   repositories/ database access, always scoped to the owning user
   schemas/      request and response models
+  embeddings/   embedding providers behind one interface (OpenAI, offline hashing)
   ingestion/    text extraction and chunking (pure functions, no I/O)
   services/     business rules (auth, uploads, ingestion)
+  worker/       Celery app, background tasks and the queue the API sends to
   storage/      file storage behind an interface (local disk now, S3-compatible later)
 docs/           design write-ups
 migrations/     Alembic migrations
@@ -113,6 +121,11 @@ tests/          pytest suite
 - **Clear failures instead of empty documents.** Password-protected, damaged, over-long and image-only PDFs are marked `failed` with a reason the user can act on (an image-only PDF needs OCR), rather than silently producing no chunks.
 - **Chunks are sized in tokens, not characters.** Chunking uses the same tokenizer family as the models, so a chunk's size in a prompt is known exactly. Text is split at the most natural boundary that fits (paragraph, then sentence, then a token window as a last resort), and neighbouring chunks share a few sentences so a fact on a boundary is still found.
 - **Ingestion is idempotent and safe to run concurrently.** A worker claims a document with `SELECT ... FOR UPDATE SKIP LOCKED`, and reprocessing replaces the document's chunks instead of appending, so retries never create duplicates. CPU-bound parsing runs in a worker thread so it never blocks the event loop.
+- **Uploads return immediately.** The API stores the file, queues it, and responds with status `pending`; a Celery worker extracts, chunks and embeds it. A slow 500-page PDF never ties up a web request, and API and workers scale independently.
+- **Tasks are not lost.** Tasks are acknowledged only after they finish, so if a worker dies mid-document the task returns to the queue. This is safe because processing is idempotent. A queue outage during upload does not fail the upload; the document stays `pending` and can be queued again.
+- **Retries only where they can help.** A broken file fails at once with a reason. An embedding-service outage or rate limit sends the document back to `pending` and retries with exponential backoff (30 s, 1 min, 2 min, ...), marking it `failed` only after the last attempt.
+- **Vectors know their model.** Each document records the embedding model that produced its vectors, because vectors from different models cannot be compared. Switching models means re-embedding, which the process endpoint supports.
+- **HNSW index for search.** Nearest-neighbour queries use pgvector's HNSW index with cosine distance, so search stays fast as chunks grow into the hundreds of thousands, without the training step IVFFlat needs.
 - **Stateless API.** No in-process state is shared between requests, so the API can be scaled horizontally behind a load balancer.
 
 ## Roadmap
@@ -120,7 +133,7 @@ tests/          pytest suite
 - [x] Project foundation: configuration, logging, error handling, health checks, CI
 - [x] Authentication and document upload
 - [x] Text extraction and chunking
-- [ ] Embeddings, pgvector storage and background ingestion
+- [x] Embeddings, pgvector storage and background ingestion
 - [ ] Retrieval and answers with citations
 - [ ] Evaluation suite and published results
 - [ ] Model selection write-up backed by evaluation runs
