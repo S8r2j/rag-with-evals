@@ -18,7 +18,8 @@ from app.core.errors import (
     PayloadTooLargeError,
     UnsupportedMediaTypeError,
 )
-from app.models import Document, DocumentStatus
+from app.models import Chunk, Document, DocumentStatus
+from app.repositories.chunks import ChunkRepository
 from app.repositories.documents import DocumentRepository
 from app.storage.base import Storage
 
@@ -166,7 +167,7 @@ class DocumentService:
         if not valid:
             raise UnsupportedMediaTypeError("File contents do not match its extension")
 
-    async def list(
+    async def list_documents(
         self, owner_id: uuid.UUID, *, limit: int, offset: int
     ) -> tuple[list[Document], int]:
         return await self.documents.list_for_owner(owner_id, limit=limit, offset=offset)
@@ -178,6 +179,14 @@ class DocumentService:
             # someone else, so IDs of other users' documents are not revealed.
             raise NotFoundError("Document not found")
         return document
+
+    async def list_chunks(
+        self, owner_id: uuid.UUID, document_id: uuid.UUID, *, limit: int, offset: int
+    ) -> tuple[list[Chunk], int]:
+        await self.get(owner_id, document_id)  # ownership check
+        return await ChunkRepository(self.session).list_for_document(
+            document_id, limit=limit, offset=offset
+        )
 
     async def delete(self, owner_id: uuid.UUID, document_id: uuid.UUID) -> None:
         document = await self.get(owner_id, document_id)

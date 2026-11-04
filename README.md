@@ -59,6 +59,7 @@ All endpoints except the health checks require a bearer token.
 | `POST` | `/api/v1/documents` | Upload a PDF, DOCX, TXT or Markdown file |
 | `GET` | `/api/v1/documents?limit=&offset=` | List your documents, newest first |
 | `GET` | `/api/v1/documents/{id}` | One document and its processing status |
+| `GET` | `/api/v1/documents/{id}/chunks?limit=&offset=` | The chunks a processed document was split into |
 | `DELETE` | `/api/v1/documents/{id}` | Delete a document and its file |
 | `GET` | `/health/live`, `/health/ready` | Liveness and readiness probes |
 
@@ -74,6 +75,10 @@ curl -X POST localhost:8000/api/v1/documents \
   -H "Authorization: Bearer $TOKEN" -F file=@report.pdf
 ```
 
+## Documentation
+
+- [How documents are ingested](docs/ingestion.md): extraction, cleaning and chunking explained with a worked example, how the chunk size is chosen, and how short and long documents are handled.
+
 ## Project layout
 
 ```
@@ -84,8 +89,10 @@ app/
   models/       SQLAlchemy models
   repositories/ database access, always scoped to the owning user
   schemas/      request and response models
-  services/     business rules (auth, uploads)
+  ingestion/    text extraction and chunking (pure functions, no I/O)
+  services/     business rules (auth, uploads, ingestion)
   storage/      file storage behind an interface (local disk now, S3-compatible later)
+docs/           design write-ups
 migrations/     Alembic migrations
 tests/          pytest suite
 ```
@@ -102,13 +109,17 @@ tests/          pytest suite
 - **Tenant isolation lives in the data layer.** Every document query filters by owner, and another user's document returns `404` rather than `403`, so its existence is not revealed.
 - **File and database stay consistent.** The file is written atomically (temp file, then rename) and the database row is committed only after the file is stored; if the commit fails, the file is removed.
 - **Passwords use Argon2id.** Logins for unknown emails still run a hash check, so response time does not reveal which emails have accounts.
+- **Text extraction keeps page numbers.** PDFs are read page by page so every chunk knows the pages it came from, which is what answer citations point to. Word tables are kept as `cell | cell` rows rather than dropped. Text is normalised (hyphenated line breaks rejoined, whitespace collapsed) before chunking.
+- **Clear failures instead of empty documents.** Password-protected, damaged, over-long and image-only PDFs are marked `failed` with a reason the user can act on (an image-only PDF needs OCR), rather than silently producing no chunks.
+- **Chunks are sized in tokens, not characters.** Chunking uses the same tokenizer family as the models, so a chunk's size in a prompt is known exactly. Text is split at the most natural boundary that fits (paragraph, then sentence, then a token window as a last resort), and neighbouring chunks share a few sentences so a fact on a boundary is still found.
+- **Ingestion is idempotent and safe to run concurrently.** A worker claims a document with `SELECT ... FOR UPDATE SKIP LOCKED`, and reprocessing replaces the document's chunks instead of appending, so retries never create duplicates. CPU-bound parsing runs in a worker thread so it never blocks the event loop.
 - **Stateless API.** No in-process state is shared between requests, so the API can be scaled horizontally behind a load balancer.
 
 ## Roadmap
 
 - [x] Project foundation: configuration, logging, error handling, health checks, CI
 - [x] Authentication and document upload
-- [ ] Text extraction and chunking
+- [x] Text extraction and chunking
 - [ ] Embeddings, pgvector storage and background ingestion
 - [ ] Retrieval and answers with citations
 - [ ] Evaluation suite and published results

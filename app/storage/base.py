@@ -12,6 +12,9 @@ class Storage(Protocol):
     async def save(self, key: str, source: BinaryIO) -> None:
         """Store the contents of ``source`` under ``key``, replacing nothing."""
 
+    async def read(self, key: str) -> bytes:
+        """Return the full contents stored under ``key``."""
+
     async def delete(self, key: str) -> None:
         """Remove ``key``. Deleting a missing key is not an error."""
 
