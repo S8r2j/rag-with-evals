@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,11 @@ class Settings(BaseSettings):
 
     storage_dir: Path = Path("data/uploads")
     max_upload_mb: int = Field(default=20, gt=0)
+    max_pages: int = Field(default=1000, gt=0)
+
+    chunk_max_tokens: int = Field(default=400, ge=50)
+    chunk_overlap_tokens: int = Field(default=60, ge=0)
+    tokenizer_encoding: str = "o200k_base"
 
     cors_origins: list[str] = []
 
@@ -32,6 +37,12 @@ class Settings(BaseSettings):
         if value.scheme != "postgresql+asyncpg":
             raise ValueError("DATABASE_URL must use the postgresql+asyncpg:// scheme")
         return value
+
+    @model_validator(mode="after")
+    def check_chunk_overlap(self) -> "Settings":
+        if self.chunk_overlap_tokens >= self.chunk_max_tokens:
+            raise ValueError("CHUNK_OVERLAP_TOKENS must be smaller than CHUNK_MAX_TOKENS")
+        return self
 
     @property
     def is_production(self) -> bool:
