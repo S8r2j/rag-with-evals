@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_timeout_seconds: float = Field(default=30.0, gt=0)
 
+    # Answer generation. "extractive" needs no API key and quotes the best
+    # passage instead of writing an answer: for tests and offline development.
+    chat_provider: Literal["openai", "extractive"] = "openai"
+    chat_model: str = "gpt-6-luna"
+    chat_max_output_tokens: int = Field(default=1000, gt=0)
+
+    # Retrieval. See docs/retrieval.md for how these values were chosen.
+    retrieval_top_k: int = Field(default=5, ge=1, le=20)
+    retrieval_max_distance: float = Field(default=0.8, gt=0, le=2)
+    retrieval_ef_search: int = Field(default=100, ge=10, le=1000)
+    question_max_chars: int = Field(default=2000, ge=10)
+
     redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")
     ingestion_max_retries: int = Field(default=4, ge=0)
     # A document stuck in "processing" this long is assumed abandoned (its

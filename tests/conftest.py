@@ -46,6 +46,7 @@ def settings(tmp_path_factory: pytest.TempPathFactory) -> Settings:
         max_upload_mb=1,
         log_level="WARNING",
         embedding_provider="hashing",
+        chat_provider="extractive",
     )
 
 
