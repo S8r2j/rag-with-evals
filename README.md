@@ -75,6 +75,10 @@ curl -X POST localhost:8000/api/v1/documents \
   -H "Authorization: Bearer $TOKEN" -F file=@report.pdf
 ```
 
+## Documentation
+
+- [How documents are ingested](docs/ingestion.md): extraction, cleaning and chunking explained with a worked example, how the chunk size is chosen, and how short and long documents are handled.
+
 ## Project layout
 
 ```
@@ -88,6 +92,7 @@ app/
   ingestion/    text extraction and chunking (pure functions, no I/O)
   services/     business rules (auth, uploads, ingestion)
   storage/      file storage behind an interface (local disk now, S3-compatible later)
+docs/           design write-ups
 migrations/     Alembic migrations
 tests/          pytest suite
 ```
