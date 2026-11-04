@@ -44,6 +44,10 @@ class LocalStorage:
             Path(tmp_name).unlink(missing_ok=True)
             raise
 
+    async def read(self, key: str) -> bytes:
+        path = self._path_for(key)
+        return await anyio.to_thread.run_sync(path.read_bytes)
+
     async def delete(self, key: str) -> None:
         path = self._path_for(key)
         await anyio.to_thread.run_sync(lambda: path.unlink(missing_ok=True))

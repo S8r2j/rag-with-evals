@@ -2,7 +2,7 @@ import enum
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Enum, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -47,5 +47,6 @@ class Document(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         server_default=DocumentStatus.PENDING.value,
     )
     error_message: Mapped[str | None] = mapped_column(Text)
+    page_count: Mapped[int | None] = mapped_column(Integer)
 
     owner: Mapped["User"] = relationship(back_populates="documents")

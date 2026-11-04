@@ -15,12 +15,30 @@ class DocumentRead(BaseModel):
     size_bytes: int
     status: DocumentStatus
     error_message: str | None
+    page_count: int | None
     created_at: datetime
     updated_at: datetime
 
 
 class DocumentPage(BaseModel):
     items: list[DocumentRead]
+    total: int
+    limit: int
+    offset: int
+
+
+class ChunkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    chunk_index: int
+    text: str
+    page_start: int | None
+    page_end: int | None
+    token_count: int
+
+
+class ChunkPage(BaseModel):
+    items: list[ChunkRead]
     total: int
     limit: int
     offset: int
