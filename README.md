@@ -84,14 +84,14 @@ curl -X POST localhost:8000/api/v1/documents \
 
 ## Documentation
 
-Short guides, one topic each, in [docs/](docs/README.md):
+One guide per module, in [docs/](docs/):
 
-- [Extraction](docs/extraction.md): reading PDF, Word and text files
-- [Chunking](docs/chunking.md): splitting text, with a worked example
-- [Choosing the chunk size](docs/chunk-size.md): why 400 tokens, and how evaluation decides
-- [Embeddings](docs/embeddings.md): search by meaning with pgvector
-- [Background processing](docs/background-processing.md): queue, worker, retries and failures
-- [Live status updates](docs/live-status.md): progress over server-sent events
+| Guide | Covers |
+|---|---|
+| [Ingestion](docs/ingestion.md) | Reading PDF, Word and text files, splitting them into chunks, and how the chunk size is chosen |
+| [Embeddings](docs/embeddings.md) | Turning chunks into vectors so search works by meaning, stored and indexed in pgvector |
+| [Worker](docs/worker.md) | Background processing: the queue, retries, and what happens when something fails |
+| [Events](docs/events.md) | Following a document's progress live over server-sent events |
 
 ## Project layout
 
@@ -126,7 +126,7 @@ tests/          pytest suite
 - **Tenant isolation lives in the data layer.** Every document query filters by owner, and another user's document returns `404` rather than `403`, so its existence is not revealed.
 - **File and database stay consistent.** The file is written atomically (temp file, then rename) and the database row is committed only after the file is stored; if the commit fails, the file is removed.
 - **Passwords use Argon2id.** Logins for unknown emails still run a hash check, so response time does not reveal which emails have accounts.
-- **Processing happens in the background.** Uploads return at once; a worker extracts, chunks and embeds the file, and clients follow progress live over server-sent events. See [docs/](docs/README.md).
+- **Processing happens in the background.** Uploads return at once; a worker extracts, chunks and embeds the file, and clients follow progress live over server-sent events. See [docs/](docs/).
 - **Failures are explicit.** Unusable files fail with a reason the user can act on; embedding-service outages are retried with backoff before giving up.
 - **Safe to retry.** Only one worker can claim a document, a dead worker's claim expires, and reprocessing replaces chunks, so retries never duplicate work.
 - **Stateless API.** No in-process state is shared between requests, so the API can be scaled horizontally behind a load balancer.

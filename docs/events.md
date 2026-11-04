@@ -1,6 +1,6 @@
-# Live status updates
+# Events
 
-Code: `app/events/` and the `/events` route in `app/api/routes/documents.py`.
+Live status updates for documents being processed. Code: `app/events/` and the `/events` route in `app/api/routes/documents.py`.
 
 ## What the client sees
 

@@ -1,6 +1,6 @@
-# Background processing
+# Worker
 
-Code: `app/worker/` and `app/services/ingestion.py`.
+Runs processing in the background. Code: `app/worker/` and `app/services/ingestion.py`.
 
 ## Why a worker
 
@@ -8,7 +8,7 @@ Processing a large PDF and calling the embedding service takes time. Doing it in
 
 1. The upload stores the file, saves the document as `pending`, puts its ID on a queue (Redis), and responds at once.
 2. A worker (Celery) takes the ID and runs extraction, chunking and embedding.
-3. The client follows progress with [live status updates](live-status.md), or by reading the document.
+3. The client follows progress with [live status updates](events.md), or by reading the document.
 
 The API and workers scale separately: more users need more API instances, a backlog needs more workers.
 
@@ -38,5 +38,3 @@ The API and workers scale separately: more users need more API instances, a back
 | `REDIS_URL` | `redis://localhost:6379/0` | Queue and status updates |
 | `INGESTION_MAX_RETRIES` | 4 | Retries after an embedding outage |
 | `INGESTION_LEASE_SECONDS` | 1800 | After this, a `processing` document counts as abandoned |
-
-Next: [Live status updates](live-status.md)

@@ -26,5 +26,3 @@ Search has to work by **meaning**, not exact words: "When was it built?" should 
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Model name |
 | `EMBEDDING_BATCH_SIZE` | 128 | Chunks per request; settings reject a batch that could exceed the provider's token cap |
 | `OPENAI_API_KEY` | none | Needed for the `openai` provider |
-
-Next: [Background processing](background-processing.md)
