@@ -4,6 +4,12 @@
 than once for the same document (chunks are replaced, not appended), it
 records failures on the document so the user can see why, and it does the
 CPU-heavy parsing off the event loop.
+
+Failures fall into two kinds. Problems with the file itself (a scanned PDF,
+a password) will never succeed, so the document is marked failed at once.
+Problems with the embedding service (timeouts, rate limits) may clear up, so
+the document goes back to pending and the error is raised for the task queue
+to retry; only the last attempt marks it failed.
 """
 
 import uuid
@@ -14,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.embeddings import Embedder, EmbeddingError, TransientEmbeddingError
 from app.ingestion.chunking import Chunker, get_tokenizer
 from app.ingestion.extract import ExtractedDocument, ExtractionError, extract_text
 from app.models import Document, DocumentStatus
@@ -22,14 +29,20 @@ from app.storage.base import Storage
 
 logger = structlog.get_logger(__name__)
 
-GENERIC_FAILURE = "Processing failed due to an internal error. Try uploading the file again."
+GENERIC_FAILURE = "Processing failed due to an internal error. Try processing the document again."
+EMBEDDING_UNAVAILABLE = (
+    "The embedding service was unavailable. Try processing the document again later."
+)
 
 
 class IngestionService:
-    def __init__(self, session: AsyncSession, storage: Storage, settings: Settings) -> None:
+    def __init__(
+        self, session: AsyncSession, storage: Storage, settings: Settings, embedder: Embedder
+    ) -> None:
         self.session = session
         self.storage = storage
         self.settings = settings
+        self.embedder = embedder
         self.chunks = ChunkRepository(session)
         self.chunker = Chunker(
             get_tokenizer(settings.tokenizer_encoding),
@@ -37,7 +50,9 @@ class IngestionService:
             overlap_tokens=settings.chunk_overlap_tokens,
         )
 
-    async def process(self, document_id: uuid.UUID) -> Document | None:
+    async def process(
+        self, document_id: uuid.UUID, *, final_attempt: bool = True
+    ) -> Document | None:
         document = await self._claim(document_id)
         if document is None:
             return None
@@ -47,6 +62,7 @@ class IngestionService:
             data = await self.storage.read(document.storage_key)
             extracted = await anyio.to_thread.run_sync(self._extract, data, document.content_type)
             chunks = await anyio.to_thread.run_sync(self.chunker.chunk, extracted.pages)
+            vectors = await self.embedder.embed([chunk.text for chunk in chunks])
             await self.chunks.replace_for_document(
                 document.id,
                 document.owner_id,
@@ -57,11 +73,13 @@ class IngestionService:
                         "page_start": chunk.page_start,
                         "page_end": chunk.page_end,
                         "token_count": chunk.token_count,
+                        "embedding": vector,
                     }
-                    for chunk in chunks
+                    for chunk, vector in zip(chunks, vectors, strict=True)
                 ],
             )
             document.page_count = extracted.page_count
+            document.embedding_model = self.embedder.model
             document.status = DocumentStatus.READY
             document.error_message = None
             await self.session.commit()
@@ -69,6 +87,18 @@ class IngestionService:
             await self._mark_failed(document_id, str(exc))
             log.info("document_extraction_failed", reason=str(exc))
             return document
+        except TransientEmbeddingError:
+            if final_attempt:
+                await self._mark_failed(document_id, EMBEDDING_UNAVAILABLE)
+                log.error("document_embedding_gave_up")
+            else:
+                await self._set_status(document_id, DocumentStatus.PENDING, None)
+                log.warning("document_embedding_retrying")
+            raise
+        except EmbeddingError:
+            await self._mark_failed(document_id, GENERIC_FAILURE)
+            log.exception("document_embedding_rejected")
+            raise
         except Exception:
             await self._mark_failed(document_id, GENERIC_FAILURE)
             log.exception("document_processing_error")
@@ -98,9 +128,15 @@ class IngestionService:
         return document
 
     async def _mark_failed(self, document_id: uuid.UUID, message: str) -> None:
+        await self._set_status(document_id, DocumentStatus.FAILED, message)
+
+    async def _set_status(
+        self, document_id: uuid.UUID, status: DocumentStatus, message: str | None
+    ) -> None:
+        """Undo the partial work, then record the outcome on its own."""
         await self.session.rollback()
         document = await self.session.get(Document, document_id)
         if document is not None:
-            document.status = DocumentStatus.FAILED
+            document.status = status
             document.error_message = message
             await self.session.commit()

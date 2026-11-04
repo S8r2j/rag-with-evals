@@ -12,6 +12,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.db.session import create_engine, create_session_factory
 from app.storage import LocalStorage
+from app.worker.queue import CeleryIngestionQueue
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -37,6 +38,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.storage = LocalStorage(settings.storage_dir)
+    app.state.ingestion_queue = CeleryIngestionQueue(settings)
 
     app.add_middleware(RequestContextMiddleware)
     if settings.cors_origins:

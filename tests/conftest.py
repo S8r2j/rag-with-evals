@@ -12,6 +12,7 @@ every run.
 
 import asyncio
 import os
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -43,6 +44,7 @@ def settings(tmp_path_factory: pytest.TempPathFactory) -> Settings:
         storage_dir=tmp_path_factory.mktemp("uploads"),
         max_upload_mb=1,
         log_level="WARNING",
+        embedding_provider="hashing",
     )
 
 
@@ -83,10 +85,31 @@ def storage(tmp_path: Path) -> LocalStorage:
     return LocalStorage(tmp_path / "uploads")
 
 
+class RecordingQueue:
+    """Stands in for Celery: records what was queued instead of sending it."""
+
+    def __init__(self) -> None:
+        self.enqueued: list[uuid.UUID] = []
+        self.fail = False
+
+    async def enqueue(self, document_id: uuid.UUID) -> None:
+        if self.fail:
+            raise ConnectionError("broker unavailable")
+        self.enqueued.append(document_id)
+
+
 @pytest.fixture
-def app(settings: Settings, db_session: AsyncSession, storage: LocalStorage) -> FastAPI:
+def queue() -> RecordingQueue:
+    return RecordingQueue()
+
+
+@pytest.fixture
+def app(
+    settings: Settings, db_session: AsyncSession, storage: LocalStorage, queue: RecordingQueue
+) -> FastAPI:
     application = create_app(settings)
     application.state.storage = storage
+    application.state.ingestion_queue = queue
 
     async def override_get_db() -> AsyncIterator[AsyncSession]:
         yield db_session

@@ -12,6 +12,7 @@ from app.db.session import session_scope
 from app.models import User
 from app.repositories.users import UserRepository
 from app.storage.base import Storage
+from app.worker.queue import IngestionQueue
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 
@@ -29,9 +30,14 @@ def get_storage(request: Request) -> Storage:
     return request.app.state.storage
 
 
+def get_ingestion_queue(request: Request) -> IngestionQueue:
+    return request.app.state.ingestion_queue
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 StorageDep = Annotated[Storage, Depends(get_storage)]
+QueueDep = Annotated[IngestionQueue, Depends(get_ingestion_queue)]
 
 
 async def get_current_user(

@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Query, Response, UploadFile, status
 
-from app.api.deps import CurrentUser, DbSession, SettingsDep, StorageDep
+from app.api.deps import CurrentUser, DbSession, QueueDep, SettingsDep, StorageDep
 from app.schemas.documents import ChunkPage, ChunkRead, DocumentPage, DocumentRead
 from app.services.documents import DocumentService
 
@@ -17,8 +17,14 @@ async def upload_document(
     db: DbSession,
     storage: StorageDep,
     settings: SettingsDep,
+    queue: QueueDep,
 ) -> DocumentRead:
-    document = await DocumentService(db, storage, settings).upload(user.id, file)
+    """Store the file and queue it for processing. The response comes back
+    straight away with status `pending`; poll the document until it is
+    `ready` or `failed`."""
+    service = DocumentService(db, storage, settings)
+    document = await service.upload(user.id, file)
+    await service.schedule_processing(document, queue)
     return DocumentRead.model_validate(document)
 
 
@@ -74,6 +80,24 @@ async def list_chunks(
         limit=limit,
         offset=offset,
     )
+
+
+@router.post(
+    "/{document_id}/process",
+    response_model=DocumentRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def process_document(
+    document_id: uuid.UUID,
+    user: CurrentUser,
+    db: DbSession,
+    storage: StorageDep,
+    settings: SettingsDep,
+    queue: QueueDep,
+) -> DocumentRead:
+    """Queue a document for processing again, for example after a failure."""
+    document = await DocumentService(db, storage, settings).reprocess(user.id, document_id, queue)
+    return DocumentRead.model_validate(document)
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
