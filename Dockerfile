@@ -4,7 +4,8 @@ FROM python:3.12-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken
 
 WORKDIR /app
 
@@ -13,6 +14,9 @@ COPY pyproject.toml README.md ./
 RUN mkdir app && touch app/__init__.py \
     && pip install . \
     && rm -rf app
+
+# Bake the tokenizer into the image so containers never download it at runtime.
+RUN python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
 
 COPY app ./app
 COPY migrations ./migrations
