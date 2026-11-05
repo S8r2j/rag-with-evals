@@ -28,5 +28,8 @@ def build_chat_model(settings: Settings) -> ChatModel:
         max_retries=2,
     )
     return OpenAIChatModel(
-        client, model=settings.chat_model, max_output_tokens=settings.chat_max_output_tokens
+        client,
+        model=settings.chat_model,
+        max_output_tokens=settings.chat_max_output_tokens,
+        reasoning_effort=settings.chat_reasoning_effort,
     )

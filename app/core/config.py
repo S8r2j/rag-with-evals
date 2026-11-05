@@ -41,7 +41,12 @@ class Settings(BaseSettings):
     # passage instead of writing an answer: for tests and offline development.
     chat_provider: Literal["openai", "extractive"] = "openai"
     chat_model: str = "gpt-6-luna"
-    chat_max_output_tokens: int = Field(default=1000, gt=0)
+    # Reasoning models spend hidden "thinking" tokens before answering, and
+    # those count against the output limit. Answering from a few supplied
+    # passages needs little deliberation, so effort is kept low and the limit
+    # leaves room for both. Set to None for models without reasoning.
+    chat_reasoning_effort: Literal["none", "low", "medium", "high"] | None = "low"
+    chat_max_output_tokens: int = Field(default=4000, gt=0)
 
     # Retrieval. See docs/retrieval.md for how these values were chosen.
     retrieval_top_k: int = Field(default=5, ge=1, le=20)
@@ -61,6 +66,12 @@ class Settings(BaseSettings):
     sse_max_stream_seconds: float = Field(default=30 * 60, gt=0)
 
     cors_origins: list[str] = []
+
+    @field_validator("chat_reasoning_effort", mode="before")
+    @classmethod
+    def _empty_means_none(cls, value: object) -> object:
+        # CHAT_REASONING_EFFORT= (empty) in .env turns reasoning off.
+        return None if value == "" else value
 
     @field_validator("database_url")
     @classmethod

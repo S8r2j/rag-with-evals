@@ -39,16 +39,27 @@ _RESPONSE_FORMAT = {
 
 
 class OpenAIChatModel:
-    def __init__(self, client: openai.AsyncOpenAI, *, model: str, max_output_tokens: int) -> None:
+    def __init__(
+        self,
+        client: openai.AsyncOpenAI,
+        *,
+        model: str,
+        max_output_tokens: int,
+        reasoning_effort: str | None = None,
+    ) -> None:
         self.client = client
         self._model = model
         self.max_output_tokens = max_output_tokens
+        self.reasoning_effort = reasoning_effort
 
     @property
     def model(self) -> str:
         return self._model
 
     async def answer(self, question: str, sources: list[Source]) -> GeneratedAnswer:
+        options = {}
+        if self.reasoning_effort is not None:
+            options["reasoning_effort"] = self.reasoning_effort
         try:
             response = await self.client.chat.completions.create(
                 model=self._model,
@@ -57,7 +68,9 @@ class OpenAIChatModel:
                     {"role": "user", "content": build_user_message(question, sources)},
                 ],
                 response_format=_RESPONSE_FORMAT,
+                # For reasoning models this budget covers thinking and answer.
                 max_completion_tokens=self.max_output_tokens,
+                **options,
             )
         except _TRANSIENT_ERRORS as exc:
             raise TransientChatError(f"Chat model unavailable: {exc}") from exc

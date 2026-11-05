@@ -44,9 +44,16 @@ class FakeCompletions:
         )
 
 
-def model_with(completions: FakeCompletions) -> OpenAIChatModel:
+def model_with(
+    completions: FakeCompletions, reasoning_effort: str | None = None
+) -> OpenAIChatModel:
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
-    return OpenAIChatModel(client, model="gpt-6-luna", max_output_tokens=500)  # type: ignore[arg-type]
+    return OpenAIChatModel(
+        client,  # type: ignore[arg-type]
+        model="gpt-6-luna",
+        max_output_tokens=500,
+        reasoning_effort=reasoning_effort,
+    )
 
 
 async def test_structured_answer_is_parsed() -> None:
@@ -62,6 +69,13 @@ async def test_structured_answer_is_parsed() -> None:
     assert completions.kwargs["model"] == "gpt-6-luna"
     assert completions.kwargs["max_completion_tokens"] == 500
     assert completions.kwargs["response_format"]["json_schema"]["strict"] is True
+    assert "reasoning_effort" not in completions.kwargs
+
+
+async def test_reasoning_effort_is_sent_when_configured() -> None:
+    completions = FakeCompletions(json.dumps({"answerable": True, "answer": "x", "citations": []}))
+    await model_with(completions, reasoning_effort="low").answer("q", SOURCES)
+    assert completions.kwargs["reasoning_effort"] == "low"
 
 
 @pytest.mark.parametrize(
