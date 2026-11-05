@@ -1,4 +1,4 @@
-.PHONY: install lint format test up down migrate worker
+.PHONY: install lint format test up down migrate worker eval eval-retrieval eval-offline
 
 install:
 	pip install -e ".[dev]"
@@ -25,3 +25,12 @@ migrate:
 
 worker:
 	celery -A app.worker.tasks worker --loglevel=INFO --concurrency=2
+
+eval:
+	python -m evals
+
+eval-retrieval:
+	python -m evals --mode retrieval
+
+eval-offline:
+	python -m evals --offline

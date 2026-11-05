@@ -69,9 +69,11 @@ OpenAI describes it as its most efficient model for focused, high-volume tasks. 
 
 Like the other numbers here, this is a starting point. The evaluation suite will compare it with a larger model on answer correctness, faithfulness to the sources, latency and cost per question, and the full reasoning will be written up with those results. The model is a setting, so switching is a configuration change.
 
-### 1,000 output tokens (`CHAT_MAX_OUTPUT_TOKENS`)
+### Low reasoning effort and 4,000 output tokens (`CHAT_REASONING_EFFORT`, `CHAT_MAX_OUTPUT_TOKENS`)
 
-Roughly 700 words, far more than a concise cited answer needs. The cap protects against runaway cost. If an answer hits it, the request fails clearly rather than returning a half-finished sentence.
+`gpt-6-luna` is a reasoning model: before answering it spends hidden "thinking" tokens, which are billed as output and count against the output limit. At the default (medium) effort, thinking alone can use up a small limit and cut the answer off.
+
+Reading a few supplied passages and quoting from them needs little deliberation, so effort is set to `low`, and the limit of 4,000 tokens leaves room for both the thinking and a concise answer of a few hundred tokens. The limit still protects against runaway cost: if it is hit, the request fails clearly rather than returning a half-finished answer. The evaluation suite compares effort levels, since more thinking may help multi-part and comparison questions.
 
 ### 2,000-character questions (`QUESTION_MAX_CHARS`)
 
@@ -87,7 +89,8 @@ Long enough for a detailed question, short enough to stop someone pasting a whol
 |---|---|---|
 | `CHAT_PROVIDER` | `openai` | `openai`, or `extractive` for tests and offline work |
 | `CHAT_MODEL` | `gpt-6-luna` | Chat model name |
-| `CHAT_MAX_OUTPUT_TOKENS` | 1000 | Longest answer the model may write |
+| `CHAT_REASONING_EFFORT` | `low` | How much a reasoning model thinks first; empty for models without reasoning |
+| `CHAT_MAX_OUTPUT_TOKENS` | 4000 | Output budget, including any thinking tokens |
 | `RETRIEVAL_TOP_K` | 5 | Chunks retrieved per question |
 | `RETRIEVAL_MAX_DISTANCE` | 0.8 | Chunks further than this are dropped |
 | `RETRIEVAL_EF_SEARCH` | 100 | HNSW candidate list size |

@@ -11,3 +11,6 @@ htmlcov/
 dist/
 build/
 data/
+
+evals/results/
+evals/.cache/
