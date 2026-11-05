@@ -53,6 +53,16 @@ make test
 make lint
 ```
 
+### Evaluation
+
+60 questions over openly licensed handbook documents measure retrieval accuracy, answer correctness, faithfulness to the sources, refusals, latency and cost. See [docs/evaluation.md](docs/evaluation.md).
+
+```bash
+make eval-offline      # free: checks the pipeline with stand-in models
+make eval-retrieval    # under $0.01: compares chunk sizes, top-k and the distance cut-off
+make eval              # about $1: adds answers from two models, graded by a judge model
+```
+
 ## API
 
 All endpoints except the health checks require a bearer token.
@@ -99,6 +109,7 @@ One guide per module, in [docs/](docs/):
 | [Embeddings](docs/embeddings.md) | Turning chunks into vectors so search works by meaning, stored and indexed in pgvector |
 | [Worker](docs/worker.md) | Background processing: the queue, retries, and what happens when something fails |
 | [Retrieval](docs/retrieval.md) | Finding the right chunks for a question and writing an answer that cites them |
+| [Evaluation](docs/evaluation.md) | How quality is measured: the test set, retrieval and answer metrics, the judge, and how to run it |
 | [Events](docs/events.md) | Following a document's progress live over server-sent events |
 
 ## Project layout
@@ -119,6 +130,7 @@ app/
   worker/       Celery app, background tasks and the queue the API sends to
   storage/      file storage behind an interface (local disk now, S3-compatible later)
 docs/           design write-ups
+evals/          evaluation suite: documents, questions, runner and report
 migrations/     Alembic migrations
 tests/          pytest suite
 ```
@@ -147,6 +159,7 @@ tests/          pytest suite
 - [x] Text extraction and chunking
 - [x] Embeddings, pgvector storage and background ingestion
 - [x] Retrieval and answers with citations
-- [ ] Evaluation suite and published results
+- [x] Evaluation suite: 60 questions over open handbook documents, retrieval and answer metrics
+- [ ] Published evaluation results
 - [ ] Model selection write-up backed by evaluation runs
 - [ ] Web UI and public demo
