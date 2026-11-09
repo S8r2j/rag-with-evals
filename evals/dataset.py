@@ -23,6 +23,11 @@ class EvalQuestion(BaseModel):
     # phrases in the retrieved chunks, which needs no model at all.
     documents: list[str]
     evidence: list[str]
+    # For the question-type checks (evals/checks.py): terms the answer must
+    # contain, and for trap questions, terms it must not. "|" separates
+    # accepted spellings, e.g. "4 weeks|four weeks".
+    must_include: list[str] = []
+    must_not_include: list[str] = []
 
     @property
     def answerable(self) -> bool:

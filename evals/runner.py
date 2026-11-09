@@ -35,6 +35,7 @@ from app.services.documents import DocumentService
 from app.services.ingestion import IngestionService
 from app.services.questions import QuestionService
 from app.storage import LocalStorage
+from evals.checks import run_checks
 from evals.dataset import EvalQuestion, document_paths
 from evals.judge import Judge
 from evals.matching import contains
@@ -212,6 +213,9 @@ class AnswerRecord:
     judge_output_tokens: int = 0
     error: str = ""
     cited_sources: list[str] = field(default_factory=list)
+    cited_documents: list[str] = field(default_factory=list)
+    passages: list[str] = field(default_factory=list)
+    checks: list[dict] = field(default_factory=list)
 
 
 async def evaluate_answers(
@@ -249,6 +253,14 @@ async def evaluate_answers(
         record.system_answerable = result.answerable
         record.sources = len(result.sources)
         record.cited_sources = cited
+        record.cited_documents = sorted({s.scored.filename for s in result.sources if s.cited})
+        record.passages = passages
+        record.checks = [
+            asdict(check)
+            for check in run_checks(
+                question, result.answer, result.answerable, record.cited_documents
+            )
+        ]
         record.input_tokens, record.output_tokens = result.input_tokens, result.output_tokens
         record.latency_ms = result.latency_ms
         record.cost_usd = cost(result.model, result.input_tokens, result.output_tokens)

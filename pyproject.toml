@@ -34,6 +34,14 @@ dev = [
     "ruff>=0.8",
     "reportlab>=4.2",
 ]
+# Second-opinion evaluation frameworks (python -m evals --frameworks ...).
+# langchain-community is pinned below 0.4 because ragas 0.4.3 imports a module
+# that 0.4 removed.
+frameworks = [
+    "ragas>=0.4.3",
+    "deepeval>=4.3",
+    "langchain-community>=0.3,<0.4",
+]
 
 [build-system]
 requires = ["setuptools>=75"]

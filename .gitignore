@@ -14,3 +14,4 @@ data/
 
 evals/results/
 evals/.cache/
+.deepeval/

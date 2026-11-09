@@ -61,6 +61,7 @@ make lint
 make eval-offline      # free: checks the pipeline with stand-in models
 make eval-retrieval    # under $0.01: compares chunk sizes, top-k and the distance cut-off
 make eval              # about $1: adds answers from two models, graded by a judge model
+make eval-frameworks   # adds RAGAS and DeepEval second opinions (pip install -e ".[frameworks]")
 ```
 
 ## API
@@ -110,6 +111,7 @@ One guide per module, in [docs/](docs/):
 | [Worker](docs/worker.md) | Background processing: the queue, retries, and what happens when something fails |
 | [Retrieval](docs/retrieval.md) | Finding the right chunks for a question and writing an answer that cites them |
 | [Evaluation](docs/evaluation.md) | How quality is measured: the test set, retrieval and answer metrics, the judge, and how to run it |
+| [Evaluation frameworks](docs/evaluation-frameworks.md) | Question-type checks, RAGAS and DeepEval explained with examples, and how to read their agreement |
 | [Events](docs/events.md) | Following a document's progress live over server-sent events |
 
 ## Project layout
