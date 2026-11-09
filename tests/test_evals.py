@@ -175,3 +175,46 @@ async def test_offline_run_produces_a_report(settings, tmp_path: Path) -> None:
     results = json.loads((output / "results.json").read_text())
     assert len(results["answers"]["extractive"]) == 8
     assert set(results["retrieval"]) == {"200", "400"}
+
+
+def test_every_reference_answer_passes_its_own_checks() -> None:
+    from evals.checks import run_checks
+
+    for question in load_questions():
+        if question.answerable:
+            for check in run_checks(question, question.reference_answer, True, question.documents):
+                assert check.passed, f"{question.id}: {check.name} {check.detail}"
+
+
+def test_type_checks_catch_wrong_figures_and_missing_parts() -> None:
+    from evals.checks import run_checks
+
+    questions = {q.id: q for q in load_questions()}
+    (figures,) = run_checks(questions["q46"], "Managers join 15 classes [3].", True, [])
+    assert not figures.passed and figures.detail == "missing 3, 5"
+    (figures,) = run_checks(questions["q17"], "Up to $3400 a year.", True, [])
+    assert figures.passed  # 3,400 and 3400 are the same figure
+    (parts,) = run_checks(questions["q28"], "Four months of pay.", True, [])
+    assert parts.detail == "missing 1 month"
+
+
+def test_comparison_checks_need_both_companies_named_and_cited() -> None:
+    from evals.checks import run_checks
+
+    q53 = next(q for q in load_questions() if q.id == "q53")
+    checks = {
+        c.name: c
+        for c in run_checks(q53, "PostHog gives $1,000 a year [1].", True, ["posthog-training.md"])
+    }
+    assert not checks["names_both_companies"].passed
+    assert not checks["cites_both_documents"].passed
+    assert checks["cites_both_documents"].detail == "cited posthog-training.md"
+
+
+def test_trap_questions_catch_a_borrowed_figure_but_not_a_refusal() -> None:
+    from evals.checks import run_checks
+
+    u01 = next(q for q in load_questions() if q.id == "u01")
+    (borrowed,) = run_checks(u01, "Sourcegraph gives at least 25 days off.", True, [])
+    assert not borrowed.passed and borrowed.detail == "used 25 days"
+    assert run_checks(u01, "The documents do not cover this.", False, []) == []

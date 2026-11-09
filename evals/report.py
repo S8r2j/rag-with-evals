@@ -180,6 +180,25 @@ def render(
             )
         out += [table(["Model"] + categories, rows), ""]
 
+        out += ["### Question-type checks", ""]
+        out += [
+            "Checks that apply to one type of question and need no model: exact figures for "
+            "number and table questions, every part covered for multi-part and comparison "
+            "questions, both companies named and cited for comparisons, and no figure borrowed "
+            "from the other company for trap questions. See `evals/checks.py`.",
+            "",
+        ]
+        check_names = sorted({c["name"] for rs in answers.values() for r in rs for c in r.checks})
+        rows = []
+        for model, records in answers.items():
+            row = [f"`{model}`"]
+            for name in check_names:
+                results = [c["passed"] for r in records for c in r.checks if c["name"] == name]
+                row.append(f"{sum(results)} of {len(results)}" if results else "n/a")
+            rows.append(row)
+        if check_names:
+            out += [table(["Model"] + check_names, rows), ""]
+
         out += ["### Questions to review", ""]
         for model, records in answers.items():
             problems = [
@@ -188,12 +207,16 @@ def render(
                 if r.outcome in ("hallucination", "false_refusal", "error")
                 or r.correctness in ("incorrect", "partially_correct")
                 or r.faithful is False
+                or any(not c["passed"] for c in r.checks)
             ]
             out += [f"**`{model}`**: {len(problems)} of {len(records)}", ""]
             for r in problems:
                 issue = r.outcome if r.outcome != "graded" else r.correctness
                 if r.faithful is False:
                     issue += ", unfaithful"
+                failed = [f"{c['name']} ({c['detail']})" for c in r.checks if not c["passed"]]
+                if failed:
+                    issue += ", failed " + "; ".join(failed)
                 note = r.error or r.explanation
                 retrieved = (
                     ""
@@ -204,4 +227,5 @@ def render(
                 )
                 out.append(f"- `{r.question_id}` {issue}{retrieved}: {r.question} {note}".rstrip())
             out.append("")
+
     return "\n".join(out).rstrip() + "\n"
