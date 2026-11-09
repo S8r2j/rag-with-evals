@@ -62,6 +62,13 @@ Grading free-text answers needs judgement, so a second model grades them ("LLM a
 - Every verdict is saved with a one-sentence explanation, and the report lists every question that was not fully correct, so the grading can be checked by hand.
 - Refusals and citation checks need no judge at all.
 
+### Question-type checks and second opinions
+
+Two more layers sit on top of the metrics above, explained with examples in [Evaluation frameworks](evaluation-frameworks.md):
+
+- **Question-type checks**, run on every evaluation with no model: exact figures for number and table questions, every part covered for multi-part questions, both companies named and cited for comparisons, and no figure borrowed from the other company for trap questions. With the shared metrics above, this makes the evaluation two-level: categories, and tests that belong to each category.
+- **Second opinions from RAGAS and DeepEval** (optional): the same answers graded by two open-source frameworks with the same judge model, and a report of where all three graders agree and disagree.
+
 ## Running it
 
 | Command | Does | Needs | Cost |
@@ -69,6 +76,7 @@ Grading free-text answers needs judgement, so a second model grades them ("LLM a
 | `make eval-offline` | Whole pipeline with stand-in models | Postgres | Free |
 | `make eval-retrieval` | Chunk-size, top-k and cut-off comparison | Postgres, `OPENAI_API_KEY` | Under $0.01 |
 | `make eval` | Retrieval plus answers from `gpt-6-luna` and `gpt-6.1-terra`, graded by `gpt-6.1-sol` | Postgres, `OPENAI_API_KEY` | About $1 |
+| `make eval-frameworks` | The above on 20 questions, plus RAGAS and DeepEval second opinions | Also `pip install -e ".[frameworks]"` | More than `make eval`: each framework makes several judge calls per answer |
 
 Postgres can be the one from Docker Compose (`docker compose up -d db`). The suite uses its own database, `rag_eval`, created automatically, so it never touches application data. Results are written to `evals/results/<run id>/` as `report.md` and `results.json`.
 
