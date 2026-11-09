@@ -1,4 +1,4 @@
-.PHONY: install lint format test up down migrate worker eval eval-retrieval eval-offline
+.PHONY: install lint format test up down migrate worker eval eval-retrieval eval-offline eval-frameworks
 
 install:
 	pip install -e ".[dev]"
@@ -34,3 +34,6 @@ eval-retrieval:
 
 eval-offline:
 	python -m evals --offline
+
+eval-frameworks:
+	python -m evals --frameworks ragas,deepeval --limit 20

@@ -62,6 +62,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Reasoning effort for the answering models; 'default' leaves it to the model",
     )
     parser.add_argument("--judge-model", default="gpt-6.1-sol")
+    parser.add_argument(
+        "--frameworks",
+        type=csv(str),
+        default=[],
+        help="Second opinions from other frameworks: ragas, deepeval (needs the frameworks extra)",
+    )
+    parser.add_argument(
+        "--framework-model",
+        help="Judge model for the frameworks; defaults to --judge-model so only the method differs",
+    )
+    parser.add_argument("--framework-concurrency", type=int, default=4)
     parser.add_argument("--offline", action="store_true", help="No API calls; pipeline check only")
     parser.add_argument("--limit", type=int, help="Only the first N questions")
     parser.add_argument(
@@ -152,6 +163,30 @@ async def run(args: argparse.Namespace) -> Path:
         if isinstance(embedder, CachingEmbedder):
             embedder.close()
 
+    comparison = None
+    if args.frameworks:
+        if args.offline:
+            print("Skipping --frameworks: they need a real judge model, not available offline.")
+        elif answers:
+            from evals.frameworks import build_frameworks, compare_frameworks
+
+            graded_model = next(iter(answers))
+            framework_model = args.framework_model or args.judge_model
+            print(
+                f"Second opinions from {', '.join(args.frameworks)} "
+                f"on {graded_model}'s answers ...",
+                flush=True,
+            )
+            frameworks = build_frameworks(
+                args.frameworks,
+                api_key=settings.openai_api_key.get_secret_value(),
+                model=framework_model,
+            )
+            comparison = await compare_frameworks(
+                frameworks, as_dicts(answers[graded_model]), args.framework_concurrency
+            )
+            comparison.update(graded_model=graded_model, judge_model=framework_model)
+
     judge_tokens = [
         (r.judge_input_tokens, r.judge_output_tokens) for rs in answers.values() for r in rs
     ]
@@ -183,6 +218,7 @@ async def run(args: argparse.Namespace) -> Path:
         top_ks=args.top_k,
         answers=answers,
         answer_chunk_tokens=args.answer_chunk_size if answers else None,
+        comparison=comparison,
     )
     (output / "report.md").write_text(report, encoding="utf-8")
     (output / "results.json").write_text(
@@ -192,6 +228,7 @@ async def run(args: argparse.Namespace) -> Path:
                 "ingestion": {size: vars(summary) for size, summary in ingestion.items()},
                 "retrieval": {size: as_dicts(records) for size, records in retrieval.items()},
                 "answers": {model: as_dicts(records) for model, records in answers.items()},
+                "frameworks": comparison,
             },
             indent=2,
             default=str,
